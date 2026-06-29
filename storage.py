@@ -79,7 +79,7 @@ def get_summary():
          FROM sessions WHERE duration_seconds > 0
          GROUP BY app_name ORDER BY total_seconds DESC"""
     ).fetchall()
-    all_time = {app: secs for app, secs in rows}
+    all_time = {app: round(secs) for app, secs in rows}
 
     rows = conn.execute(
         """SELECT app_name, SUM(duration_seconds)
@@ -87,7 +87,7 @@ def get_summary():
          GROUP BY app_name ORDER BY SUM(duration_seconds) DESC""",
         (today_start,),
     ).fetchall()
-    today = {app: secs for app, secs in rows}
+    today = {app: round(secs) for app, secs in rows}
 
     rows = conn.execute(
         """SELECT app_name, SUM(duration_seconds)
@@ -95,7 +95,20 @@ def get_summary():
          GROUP BY app_name ORDER BY SUM(duration_seconds) DESC""",
         (week_start,),
     ).fetchall()
-    week = {app: secs for app, secs in rows}
+    week = {app: round(secs) for app, secs in rows}
 
     conn.close()
     return {"today": today, "week": week, "all_time": all_time}
+
+
+def get_daily_breakdown(days=7):
+    conn = _connect()
+    cutoff = time.time() - days * 86400
+    rows = conn.execute(
+        """SELECT date(started_at, 'unixepoch') as day, app_name, SUM(duration_seconds)
+         FROM sessions WHERE duration_seconds > 0 AND started_at >= ?
+         GROUP BY day, app_name ORDER BY day DESC, SUM(duration_seconds) DESC""",
+        (cutoff,),
+    ).fetchall()
+    conn.close()
+    return [(day, app, round(secs)) for day, app, secs in rows]

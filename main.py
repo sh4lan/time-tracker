@@ -50,8 +50,8 @@ def cmd_status():
 
 
 def cmd_report():
-    from report import show_report
-    show_report()
+    from webui import start_webui
+    start_webui()
 
 
 def main():
