@@ -44,9 +44,15 @@ _KNOWN_APPS = {
 
 _SUFFIXES = [
     " — Mozilla Firefox", " — Firefox",
+    " - Mozilla Firefox", " - Firefox",
     " - Google Chrome", " - Chromium", " - Brave",
     " - Opera", " - Vivaldi", " - Microsoft Edge",
     " - Google Chrome™",
+    # Windows-specific
+    " - Microsoft​Edge", " - Internet Explorer",
+    " - Firefox Developer Edition",
+    " - Chromium",
+    " — Chromium",
 ]
 
 
@@ -72,6 +78,8 @@ def _extract_browser_site(app_name, window_title):
 
     if name not in BROWSERS:
         return app_name, window_title
+
+    title = window_title
     for suffix in _SUFFIXES:
         if title.endswith(suffix):
             title = title[: -len(suffix)]
