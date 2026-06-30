@@ -1,6 +1,106 @@
 import subprocess
 import sys
 
+BROWSERS = {
+    "google-chrome", "chrome", "chromium", "chromium-browser",
+    "firefox", "mozilla-firefox",
+    "brave", "brave-browser",
+    "opera", "vivaldi", "microsoft-edge", "edge",
+}
+
+_KNOWN_APPS = {
+    # browsers
+    "google-chrome": "chrome", "chrome": "chrome",
+    "chromium-browser": "chrome", "chromium": "chrome",
+    "mozilla-firefox": "firefox", "firefox": "firefox",
+    "brave-browser": "brave", "brave": "brave",
+    "microsoft-edge": "edge",
+    # terminals
+    "kitty": "terminal",
+    "gnome-terminal": "terminal",
+    "konsole": "terminal",
+    "alacritty": "terminal",
+    "wezterm": "terminal",
+    "windows-terminal": "terminal",
+    # editors / IDEs
+    "code": "vscode",
+    "code-oss": "vscode",
+    "sublime_text": "sublime",
+    "subl": "sublime",
+    "idea": "intellij",
+    "pycharm": "pycharm",
+    # communication
+    "slack": "slack",
+    "discord": "discord",
+    "telegram": "telegram",
+    "telegram-desktop": "telegram",
+    # file mgmt
+    "thunar": "files",
+    "nautilus": "files",
+    "dolphin": "files",
+    "explorer": "files",
+    "explorer.exe": "files",
+}
+
+_SUFFIXES = [
+    " — Mozilla Firefox", " — Firefox",
+    " - Google Chrome", " - Chromium", " - Brave",
+    " - Opera", " - Vivaldi", " - Microsoft Edge",
+    " - Google Chrome™",
+]
+
+
+def _normalize_app(app_name):
+    """Normalize app names across platforms and recognize known apps."""
+    if not app_name:
+        return app_name
+    name = app_name.lower().replace(" ", "-")
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return _KNOWN_APPS.get(name, app_name)
+
+
+def _extract_browser_site(app_name, window_title):
+    """For browser windows, extract the site from the window title."""
+    if not window_title:
+        return app_name, window_title
+
+    # Normalize for browser check (strip .exe etc.)
+    name = app_name.lower().replace(" ", "-")
+    if name.endswith(".exe"):
+        name = name[:-4]
+
+    if name not in BROWSERS:
+        return app_name, window_title
+    for suffix in _SUFFIXES:
+        if title.endswith(suffix):
+            title = title[: -len(suffix)]
+            break
+
+    title = title.strip()
+    if not title:
+        return app_name, window_title
+
+    # Remove common prefixes that aren't site names
+    for prefix in ["Google Search - "]:
+        if title.startswith(prefix):
+            title = title[len(prefix) :]
+            break
+
+    # Truncate very long titles (usually page descriptions, not site names)
+    if len(title) > 60:
+        # Try to find a separator that indicates the real site name
+        # Many titles are "SiteName - Page Description" or "SiteName: Page"
+        for sep in [" - ", " | ", " :: ", " — "]:
+            if sep in title:
+                title = title.split(sep)[0].strip()
+                break
+        else:
+            title = title[:57] + "..."
+
+    combined = f"{app_name} ({title})"
+    return combined, window_title
+
 
 def _linux_get_active_window():
     try:
@@ -33,6 +133,10 @@ def _linux_get_active_window():
             if title_part:
                 window_title = title_part
 
+        if app_name:
+            app_name = _normalize_app(app_name)
+            app_name, window_title = _extract_browser_site(app_name, window_title)
+
         return app_name, window_title
     except (subprocess.TimeoutExpired, FileNotFoundError, IndexError):
         return None, None
@@ -51,7 +155,10 @@ def _win_get_active_window():
         pid = win32process.GetWindowThreadProcessId(hwnd)[1]
         proc = psutil.Process(pid)
         title = win32gui.GetWindowText(hwnd)
-        return proc.name(), title or None
+        app_name, win_title = proc.name(), title or None
+        app_name = _normalize_app(app_name)
+        app_name, win_title = _extract_browser_site(app_name, win_title)
+        return app_name, win_title
     except Exception:
         return None, None
 

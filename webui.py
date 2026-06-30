@@ -1,6 +1,10 @@
+import io
 import threading
+import urllib.parse
 import webbrowser
 from http import HTTPStatus
+
+from flask import send_file
 
 from storage import get_summary, get_active_session, get_daily_breakdown
 
@@ -74,8 +78,9 @@ HTML = """<!DOCTYPE html>
   .app-icon {
     width: 36px; height: 36px; border-radius: 8px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 16px; flex-shrink: 0; border: 1px solid #e8e0d6;
+    flex-shrink: 0; overflow: hidden;
   }
+  .app-icon img { width: 28px; height: 28px; display: block; }
   .card-body { flex: 1; min-width: 0; }
   .app-name { font-size: 14px; font-weight: 500; color: #3a3530; }
   .time-row { display: flex; gap: 14px; margin-top: 5px; flex-wrap: wrap; }
@@ -131,47 +136,56 @@ HTML = """<!DOCTYPE html>
   <div id="total-row" class="total-row"></div>
 
   <div class="sort-bar" id="sort-bar">
-    <button class="sort-btn active" data-sort="total">Total <span class="arrow">↓</span></button>
+    <button class="sort-btn active" data-sort="total">Total <span class="arrow">&darr;</span></button>
     <button class="sort-btn" data-sort="today">Today <span class="arrow"></span></button>
     <button class="sort-btn" data-sort="week">Week <span class="arrow"></span></button>
+    <button class="sort-btn" data-sort="month">Month <span class="arrow"></span></button>
   </div>
 
   <div id="content">
     <div class="empty-state" id="empty-state">
-      <p>No tracking data yet — start tracking first</p>
+      <p>No tracking data yet &mdash; start tracking first</p>
     </div>
     <div id="cards-container"></div>
   </div>
 
   <div class="footer">
-    <span id="live-label" class="live-label">○ Checking...</span>
+    <span id="live-label" class="live-label">&#9679; Checking...</span>
     <span id="db-label" class="db-label"></span>
   </div>
 </div>
 
 <script>
-const COLORS = ["#d48c6b","#7aa89f","#b892c4","#c48a7a","#8fb0c7","#c4a57a","#9ab87a","#c47a94","#7ab8a8","#b8a07a"];
-const ICONS = ["⚡","✨","\U0001f4c1","\U0001f4ac","\U0001f310","\U0001f4dd","\U0001f3b5","\U0001f4f7","\U0001f3ae","\U0001f527","\U0001f4ca","\U0001f4e7","⚙️","\U0001f50d","\U0001f4f0","\U0001f3ac","\U0001f4a1","\U0001f4bb","\U0001f4f1","\U0001f4c8"];
-const PALETTE = new Map();
-const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+var sortKey = "total";
+var sortDesc = true;
+var appsData = [];
+var breakdownData = {};
+var openApp = null;
 
-let sortKey = "total";
-let sortDesc = true;
-let appsData = [];
-let breakdownData = {};
-let openApp = null;
+function detectBaseApp(app) {
+  var idx = app.indexOf(" (");
+  return idx === -1 ? app : app.substring(0, idx);
+}
 
-function pickColor(app) {
-  if (!PALETTE.has(app)) {
-    let i = PALETTE.size % COLORS.length;
-    PALETTE.set(app, { bg: "#f0eae4", fg: COLORS[i], icon: ICONS[PALETTE.size % ICONS.length] });
+var PALETTE = ["#d48c6b","#7aa89f","#b892c4","#c48a7a","#8fb0c7","#c4a57a","#9ab87a","#c47a94","#7ab8a8","#b8a07a"];
+var PCOLORS = {};
+function colorFor(app) {
+  if (!PCOLORS[app]) {
+    var base = detectBaseApp(app);
+    var hash = 0;
+    for (var i = 0; i < base.length; i++) hash = ((hash << 5) - hash) + base.charCodeAt(i);
+    PCOLORS[app] = PALETTE[Math.abs(hash) % PALETTE.length];
   }
-  return PALETTE.get(app);
+  return PCOLORS[app];
+}
+
+function iconUrl(app) {
+  return "/api/icon/" + encodeURIComponent(app);
 }
 
 function fmt(s) {
-  const h = Math.floor(s / 3600), r = s % 3600, m = Math.floor(r / 60), sec = Math.floor(r % 60);
-  let parts = [];
+  var h = Math.floor(s / 3600), r = s % 3600, m = Math.floor(r / 60), sec = Math.floor(r % 60);
+  var parts = [];
   if (h) parts.push(h + "h");
   if (m) parts.push(m + "m");
   parts.push(sec + "s");
@@ -179,28 +193,22 @@ function fmt(s) {
 }
 
 function esc(s) {
-  const d = document.createElement("div");
+  var d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
 }
 
-function maxTime(apps) {
-  let m = 0;
-  const key = sortKey === "today" ? "today" : sortKey === "week" ? "week" : "total";
-  for (const a of apps) if (a[key] > m) m = a[key];
-  return m || 1;
-}
-
 function render() {
-  const apps = [...appsData];
-  const key = sortKey === "today" ? "today" : sortKey === "week" ? "week" : "total";
-  apps.sort((a, b) => sortDesc ? b[key] - a[key] : a[key] - b[key]);
+  var key = sortKey === "today" ? "today" : sortKey === "week" ? "week" : sortKey === "month" ? "month" : "total";
+  var apps = appsData.slice().sort(function(a, b) {
+    return sortDesc ? b[key] - a[key] : a[key] - b[key];
+  });
 
-  const status = window._status;
-  const dot = document.getElementById("status-dot");
-  const stxt = document.getElementById("status-text");
-  const live = document.getElementById("live-label");
-  if (status?.tracking) {
+  var status = window._status;
+  var dot = document.getElementById("status-dot");
+  var stxt = document.getElementById("status-text");
+  var live = document.getElementById("live-label");
+  if (status && status.tracking) {
     dot.className = "dot active";
     stxt.textContent = status.app_name;
     live.className = "live-label active";
@@ -212,11 +220,11 @@ function render() {
     live.textContent = "○ Idle";
   }
 
-  const totalSecs = apps.reduce((s, a) => s + a.total, 0);
+  var totalSecs = apps.reduce(function(s, a) { return s + a.total; }, 0);
   document.getElementById("total-row").innerHTML = "<strong>" + fmt(totalSecs) + "</strong> tracked across " + apps.length + " app" + (apps.length !== 1 ? "s" : "");
 
-  const empty = document.getElementById("empty-state");
-  const container = document.getElementById("cards-container");
+  var empty = document.getElementById("empty-state");
+  var container = document.getElementById("cards-container");
   if (!apps.length) {
     empty.style.display = "block";
     container.innerHTML = "";
@@ -224,34 +232,45 @@ function render() {
   }
   empty.style.display = "none";
 
-  const max = maxTime(apps);
-  container.innerHTML = apps.map(a => {
-    const c = pickColor(a.app);
-    const pct = Math.max(3, (a[key] / max) * 100);
-    const isOpen = openApp === a.app;
-    const daily = breakdownData[a.app] || [];
-    const dailyMax = daily.length ? Math.max(...daily.map(d => d.secs)) : 1;
-    const detailRows = daily.length ? daily.map(d => {
-      const dpct = Math.max(3, (d.secs / dailyMax) * 100);
-      return '<div class="daily-row">' +
-        '<span class="day">' + d.day + '</span>' +
-        '<span class="dur">' + fmt(d.secs) + '</span>' +
-        '</div><div class="daily-bar-track"><div class="daily-bar-fill" style="width:' + dpct + '%;background:' + c.fg + '"></div></div>';
-    }).join("") : '<div class="daily-row"><span class="day" style="color:#b5aaa0">No data for last 7 days</span></div>';
+  var max = 0;
+  for (var i = 0; i < apps.length; i++) if (apps[i][key] > max) max = apps[i][key];
+  if (!max) max = 1;
 
-    return '<div class="card" onclick="toggleDetail(' + JSON.stringify(a.app) + ')">' +
-      '<div class="app-icon" style="background:' + c.bg + ';color:' + c.fg + '">' + c.icon + '</div>' +
+  var html = "";
+  for (var i = 0; i < apps.length; i++) {
+    var a = apps[i];
+    var color = colorFor(a.app);
+    var pct = Math.max(3, (a[key] / max) * 100);
+    var isOpen = openApp === a.app;
+    var daily = breakdownData[a.app] || [];
+    var dailyMax = 1;
+    for (var j = 0; j < daily.length; j++) if (daily[j].secs > dailyMax) dailyMax = daily[j].secs;
+    var detailRows = "";
+    if (daily.length) {
+      for (var j = 0; j < daily.length; j++) {
+        var dpct = Math.max(3, (daily[j].secs / dailyMax) * 100);
+        detailRows += '<div class="daily-row"><span class="day">' + daily[j].day + '</span><span class="dur">' + fmt(daily[j].secs) + '</span></div><div class="daily-bar-track"><div class="daily-bar-fill" style="width:' + dpct + '%;background:' + color + '"></div></div>';
+      }
+    } else {
+      detailRows = '<div class="daily-row"><span class="day" style="color:#b5aaa0">No data for last 7 days</span></div>';
+    }
+
+    var appJson = JSON.stringify(a.app);
+    html += '<div class="card" onclick="toggleDetail(' + appJson + ')">' +
+      '<div class="app-icon"><img src="' + iconUrl(a.app) + '" alt=""></div>' +
       '<div class="card-body">' +
         '<div class="app-name">' + esc(a.app) + '</div>' +
         '<div class="time-row">' +
           '<div><div class="time-label">Today</div><div class="time-value">' + fmt(a.today) + '</div></div>' +
           '<div><div class="time-label">Week</div><div class="time-value">' + fmt(a.week) + '</div></div>' +
-          '<div><div class="time-label">All time</div><div class="time-value">' + fmt(a.total) + '</div></div>' +
+          '<div><div class="time-label">Month</div><div class="time-value">' + fmt(a.month) + '</div></div>' +
+          '<div><div class="time-label">All</div><div class="time-value">' + fmt(a.total) + '</div></div>' +
         '</div>' +
-        '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:' + c.fg + '"></div></div>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
       '</div></div>' +
-      '<div class="daily-detail' + (isOpen ? ' open' : '') + '" id="detail-' + a.app.replace(/ /g, '_') + '">' + detailRows + '</div>';
-  }).join("");
+      '<div class="daily-detail' + (isOpen ? ' open' : '') + '" id="detail-' + a.app.replace(/ /g, '_').replace(/[()]/g, '') + '">' + detailRows + '</div>';
+  }
+  container.innerHTML = html;
 }
 
 function toggleDetail(app) {
@@ -261,45 +280,47 @@ function toggleDetail(app) {
 
 async function fetchData() {
   try {
-    const [sr, br] = await Promise.all([
-      fetch("/api/summary").then(r => r.json()),
-      fetch("/api/breakdown").then(r => r.json()),
-    ]);
+    var sr = await fetch("/api/summary").then(function(r) { return r.json(); });
+    var br = await fetch("/api/breakdown").then(function(r) { return r.json(); });
     appsData = sr.apps;
     window._status = sr.status;
     breakdownData = {};
-    for (const [day, app, secs] of br.breakdown) {
+    for (var i = 0; i < br.breakdown.length; i++) {
+      var day = br.breakdown[i][0], app = br.breakdown[i][1], secs = br.breakdown[i][2];
       if (!breakdownData[app]) breakdownData[app] = [];
-      breakdownData[app].push({ day, secs });
+      breakdownData[app].push({ day: day, secs: secs });
     }
-    for (const app of Object.keys(breakdownData)) {
-      breakdownData[app].sort((a, b) => a.day.localeCompare(b.day));
+    for (var app in breakdownData) {
+      breakdownData[app].sort(function(a, b) { return a.day.localeCompare(b.day); });
     }
     render();
-  } catch {}
+  } catch(e) {}
 }
 
 document.getElementById("sort-bar").addEventListener("click", function(e) {
-  const btn = e.target.closest(".sort-btn");
+  var btn = e.target.closest(".sort-btn");
   if (!btn) return;
-  const key = btn.dataset.sort;
+  var key = btn.dataset.sort;
   if (key === sortKey) {
     sortDesc = !sortDesc;
   } else {
     sortKey = key;
     sortDesc = true;
   }
-  document.querySelectorAll(".sort-btn").forEach(b => {
+  var btns = document.querySelectorAll(".sort-btn");
+  for (var i = 0; i < btns.length; i++) {
+    var b = btns[i];
     b.classList.toggle("active", b.dataset.sort === sortKey);
-    b.querySelector(".arrow").textContent = b.dataset.sort === sortKey ? (sortDesc ? "↓" : "↑") : "";
-  });
+    var arrow = b.querySelector(".arrow");
+    arrow.textContent = b.dataset.sort === sortKey ? (sortDesc ? "↓" : "↑") : "";
+  }
   render();
 });
 
-const dbLabel = document.getElementById("db-label");
-fetch("/api/info").then(r => r.json()).then(d => { dbLabel.textContent = d.db; }).catch(() => {});
+var dbLabel = document.getElementById("db-label");
+fetch("/api/info").then(function(r) { return r.json(); }).then(function(d) { dbLabel.textContent = d.db; }).catch(function() {});
 fetchData();
-setInterval(fetchData, 3000);
+setInterval(fetchData, 1000);
 </script>
 </body>
 </html>"""
@@ -318,7 +339,7 @@ def make_app():
     def api_summary():
         summary = get_summary()
         all_apps = sorted(
-            set(list(summary["today"].keys()) + list(summary["week"].keys()) + list(summary["all_time"].keys()))
+            set(list(summary["today"].keys()) + list(summary["week"].keys()) + list(summary["month"].keys()) + list(summary["all_time"].keys()))
         )
         apps = []
         for app in all_apps:
@@ -326,6 +347,7 @@ def make_app():
                 "app": app,
                 "today": summary["today"].get(app, 0),
                 "week": summary["week"].get(app, 0),
+                "month": summary["month"].get(app, 0),
                 "total": summary["all_time"].get(app, 0),
             })
 
@@ -339,6 +361,15 @@ def make_app():
     @app.route("/api/breakdown")
     def api_breakdown():
         return jsonify({"breakdown": get_daily_breakdown(7)})
+
+    @app.route("/api/icon/<path:app_name>")
+    def api_icon(app_name):
+        app_name = urllib.parse.unquote(app_name)
+        from icondetect import get_app_icon_png
+        png_data = get_app_icon_png(app_name)
+        is_svg = png_data[:5] == b"<svg "
+        mimetype = "image/svg+xml" if is_svg else "image/png"
+        return send_file(io.BytesIO(png_data), mimetype=mimetype, max_age=3600)
 
     @app.route("/api/info")
     def api_info():

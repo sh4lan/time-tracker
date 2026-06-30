@@ -1,10 +1,39 @@
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 from config import DB_PATH
 
 
 def _connect():
     return sqlite3.connect(DB_PATH)
+
+
+def _day_cutoff():
+    """Return unix timestamp for 6am today (or yesterday 6am if before 6am)."""
+    now = datetime.now()
+    target = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if now < target:
+        target -= timedelta(days=1)
+    return target.timestamp()
+
+
+def _week_cutoff():
+    """Return unix timestamp for the most recent Monday at 6am."""
+    now = datetime.now()
+    monday = now - timedelta(days=now.weekday())
+    cutoff = monday.replace(hour=6, minute=0, second=0, microsecond=0)
+    if now < cutoff:
+        cutoff -= timedelta(days=7)
+    return cutoff.timestamp()
+
+
+def _month_cutoff():
+    """Return unix timestamp for the 1st of this month at 6am."""
+    now = datetime.now()
+    cutoff = now.replace(day=1, hour=6, minute=0, second=0, microsecond=0)
+    if now < cutoff:
+        cutoff = (cutoff - timedelta(days=1)).replace(day=1)
+    return cutoff.timestamp()
 
 
 def init_db():
@@ -71,34 +100,28 @@ def get_active_session():
 
 def get_summary():
     conn = _connect()
-    today_start = int(time.time() - 86400)
-    week_start = int(time.time() - 7 * 86400)
+    today_start = _day_cutoff()
+    week_start = _week_cutoff()
+    month_start = _month_cutoff()
 
-    rows = conn.execute(
-        """SELECT app_name, SUM(duration_seconds) as total_seconds
-         FROM sessions WHERE duration_seconds > 0
-         GROUP BY app_name ORDER BY total_seconds DESC"""
-    ).fetchall()
-    all_time = {app: round(secs) for app, secs in rows}
+    def _agg(cutoff):
+        if cutoff is None:
+            rows = conn.execute(
+                "SELECT app_name, COALESCE(SUM(duration_seconds),0) FROM sessions WHERE duration_seconds > 0 GROUP BY app_name"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT app_name, COALESCE(SUM(duration_seconds),0) FROM sessions WHERE duration_seconds > 0 AND started_at >= ? GROUP BY app_name",
+                (cutoff,),
+            ).fetchall()
+        return {app: round(secs) for app, secs in rows}
 
-    rows = conn.execute(
-        """SELECT app_name, SUM(duration_seconds)
-         FROM sessions WHERE duration_seconds > 0 AND started_at >= ?
-         GROUP BY app_name ORDER BY SUM(duration_seconds) DESC""",
-        (today_start,),
-    ).fetchall()
-    today = {app: round(secs) for app, secs in rows}
-
-    rows = conn.execute(
-        """SELECT app_name, SUM(duration_seconds)
-         FROM sessions WHERE duration_seconds > 0 AND started_at >= ?
-         GROUP BY app_name ORDER BY SUM(duration_seconds) DESC""",
-        (week_start,),
-    ).fetchall()
-    week = {app: round(secs) for app, secs in rows}
-
-    conn.close()
-    return {"today": today, "week": week, "all_time": all_time}
+    return {
+        "today": _agg(today_start),
+        "week": _agg(week_start),
+        "month": _agg(month_start),
+        "all_time": _agg(None),
+    }
 
 
 def get_daily_breakdown(days=7):
