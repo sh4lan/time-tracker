@@ -1,10 +1,6 @@
-import io
 import threading
-import urllib.parse
 import webbrowser
 from http import HTTPStatus
-
-from flask import send_file
 
 from storage import get_summary, get_active_session, get_daily_breakdown
 
@@ -78,9 +74,8 @@ HTML = """<!DOCTYPE html>
   .app-icon {
     width: 36px; height: 36px; border-radius: 8px;
     display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0; overflow: hidden;
+    flex-shrink: 0; font-size: 15px; font-weight: 600;
   }
-  .app-icon img { width: 28px; height: 28px; display: block; }
   .card-body { flex: 1; min-width: 0; }
   .app-name { font-size: 14px; font-weight: 500; color: #3a3530; }
   .time-row { display: flex; gap: 14px; margin-top: 5px; flex-wrap: wrap; }
@@ -179,8 +174,9 @@ function colorFor(app) {
   return PCOLORS[app];
 }
 
-function iconUrl(app) {
-  return "/api/icon/" + encodeURIComponent(app);
+function letterFor(app) {
+  var base = detectBaseApp(app);
+  return base.charAt(0).toUpperCase();
 }
 
 function fmt(s) {
@@ -257,7 +253,7 @@ function render() {
 
     var appJson = JSON.stringify(a.app);
     html += '<div class="card" onclick="toggleDetail(' + appJson + ')">' +
-      '<div class="app-icon"><img src="' + iconUrl(a.app) + '" alt=""></div>' +
+      '<div class="app-icon" style="background:' + color + '18;color:' + color + '">' + letterFor(a.app) + '</div>' +
       '<div class="card-body">' +
         '<div class="app-name">' + esc(a.app) + '</div>' +
         '<div class="time-row">' +
@@ -361,15 +357,6 @@ def make_app():
     @app.route("/api/breakdown")
     def api_breakdown():
         return jsonify({"breakdown": get_daily_breakdown(7)})
-
-    @app.route("/api/icon/<path:app_name>")
-    def api_icon(app_name):
-        app_name = urllib.parse.unquote(app_name)
-        from icondetect import get_app_icon_png
-        png_data = get_app_icon_png(app_name)
-        is_svg = png_data[:5] == b"<svg "
-        mimetype = "image/svg+xml" if is_svg else "image/png"
-        return send_file(io.BytesIO(png_data), mimetype=mimetype, max_age=3600)
 
     @app.route("/api/info")
     def api_info():
