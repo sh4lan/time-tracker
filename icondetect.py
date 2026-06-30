@@ -8,8 +8,9 @@ Falls back to a generated SVG with the app's first letter if nothing found.
 
 import io
 import os
-import sys
+import shutil
 import struct
+import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -186,6 +187,99 @@ def _icon_to_png_bytes(path: Path) -> bytes | None:
     return None
 
 
+def _find_win32_exe(app_name: str) -> str | None:
+    """Find the actual executable path for a given app name on Windows."""
+    name = app_name.lower().replace(" ", "")
+
+    # Known app name -> exe filename mappings
+    exe_map = {
+        "chrome": "chrome.exe",
+        "firefox": "firefox.exe",
+        "brave": "brave.exe",
+        "chromium": "chromium.exe",
+        "opera": "opera.exe",
+        "edge": "msedge.exe",
+        "code": "code.exe",
+        "vscode": "code.exe",
+        "slack": "slack.exe",
+        "discord": "discord.exe",
+        "spotify": "spotify.exe",
+        "telegram": "telegram.exe",
+        "terminal": "WindowsTerminal.exe",
+        "cmd": "cmd.exe",
+        "powershell": "powershell.exe",
+        "explorer": "explorer.exe",
+        "files": "explorer.exe",
+        "outlook": "outlook.exe",
+        "word": "winword.exe",
+        "excel": "excel.exe",
+        "powerpoint": "powerpnt.exe",
+        "teams": "teams.exe",
+        "zoom": "Zoom.exe",
+        "obsidian": "Obsidian.exe",
+        "notion": "Notion.exe",
+        "notepad": "notepad.exe",
+        "calculator": "calculator.exe",
+        "settings": "SystemSettings.exe",
+    }
+
+    # 1. Try shutil.which with known exe name
+    exe_name = exe_map.get(name, f"{name}.exe")
+    found = shutil.which(exe_name)
+    if found:
+        return found
+
+    # 2. Try shutil.which with just the app name (works if on PATH)
+    found = shutil.which(name)
+    if found:
+        return found
+
+    # 3. Try common install locations
+    drives = [os.environ.get("SYSTEMDRIVE", "C:")]
+    prog_files = [
+        os.environ.get("ProgramFiles", f"{d}\\Program Files"),
+        os.environ.get("ProgramFiles(x86)", f"{d}\\Program Files (x86)"),
+        os.environ.get("LOCALAPPDATA", f"{d}\\Users\\{os.environ.get('USERNAME', '')}\\AppData\\Local"),
+    ]
+
+    # App-specific known install sub-paths
+    sub_paths = exe_map.get(name, exe_name)
+    known_locations = {
+        "chrome.exe": [
+            "Google\\Chrome\\Application\\chrome.exe",
+        ],
+        "firefox.exe": [
+            "Mozilla Firefox\\firefox.exe",
+        ],
+        "code.exe": [
+            "Microsoft VS Code\\bin\\code.cmd",
+            "Microsoft VS Code\\Code.exe",
+        ],
+        "slack.exe": [
+            "Slack\\slack.exe",
+        ],
+        "discord.exe": [
+            "Discord\\Discord.exe",
+            "Discord\\Update.exe --processStart Discord.exe",
+        ],
+        "spotify.exe": [
+            "Spotify\\Spotify.exe",
+        ],
+    }
+
+    install_paths = known_locations.get(exe_name, [])
+    if not install_paths and exe_name != name + ".exe":
+        install_paths = [f"{name}\\{exe_name}"]
+
+    for pf in prog_files:
+        for rel_path in install_paths:
+            full = os.path.join(pf, rel_path)
+            if os.path.exists(full):
+                return full
+
+    return None
+
+
 def _extract_win32_icon(app_name: str) -> bytes | None:
     """Extract icon from a Windows executable."""
     if sys.platform != "win32":
@@ -198,23 +292,11 @@ def _extract_win32_icon(app_name: str) -> bytes | None:
     except ImportError:
         return None
 
+    exe_path = _find_win32_exe(app_name)
+    if not exe_path:
+        return None
+
     try:
-        # Try common exe locations
-        base = app_name.lower().replace(" ", "")
-        search_paths = [
-            base,
-            f"C:\\Program Files\\{base}\\{base}.exe",
-            f"C:\\Program Files (x86)\\{base}\\{base}.exe",
-        ]
-        exe_path = None
-        for sp in search_paths:
-            if os.path.exists(sp):
-                exe_path = sp
-                break
-
-        if not exe_path:
-            return None
-
         large, small = win32gui.ExtractIconEx(exe_path, 0)
         if not large:
             return None
@@ -233,7 +315,6 @@ def _extract_win32_icon(app_name: str) -> bytes | None:
         bmp_info = bmp.GetInfo()
         width, height = bmp_info['bmWidth'], bmp_info['bmHeight']
 
-        # Convert to PIL
         from PIL import Image as PILImage
         hdc = win32ui.CreateDCFromHandle(wg.GetDC(0))
         bitmap = win32ui.CreateBitmap()
