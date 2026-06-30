@@ -1,44 +1,6 @@
 import subprocess
 import sys
 
-_KNOWN_APPS = {
-    "google-chrome": "chrome", "chrome": "chrome",
-    "chromium-browser": "chrome", "chromium": "chrome",
-    "mozilla-firefox": "firefox", "firefox": "firefox",
-    "brave-browser": "brave", "brave": "brave",
-    "microsoft-edge": "edge",
-    "kitty": "terminal",
-    "gnome-terminal": "terminal",
-    "konsole": "terminal",
-    "alacritty": "terminal",
-    "wezterm": "terminal",
-    "windows-terminal": "terminal",
-    "code": "vscode",
-    "code-oss": "vscode",
-    "sublime_text": "sublime",
-    "subl": "sublime",
-    "idea": "intellij",
-    "pycharm": "pycharm",
-    "slack": "slack",
-    "discord": "discord",
-    "telegram": "telegram",
-    "telegram-desktop": "telegram",
-    "thunar": "files",
-    "nautilus": "files",
-    "dolphin": "files",
-    "explorer": "files",
-    "explorer.exe": "files",
-}
-
-
-def _normalize_app(app_name):
-    if not app_name:
-        return app_name
-    name = app_name.lower().replace(" ", "-")
-    if name.endswith(".exe"):
-        name = name[:-4]
-    return _KNOWN_APPS.get(name, app_name)
-
 
 def _linux_get_active_window():
     try:
@@ -71,9 +33,6 @@ def _linux_get_active_window():
             if title_part:
                 window_title = title_part
 
-        if app_name:
-            app_name = _normalize_app(app_name)
-
         return app_name, window_title
     except (subprocess.TimeoutExpired, FileNotFoundError, IndexError):
         return None, None
@@ -93,7 +52,6 @@ def _win_get_active_window():
         proc = psutil.Process(pid)
         title = win32gui.GetWindowText(hwnd)
         app_name = proc.name()
-        app_name = _normalize_app(app_name)
         return app_name, title or None
     except Exception:
         return None, None
