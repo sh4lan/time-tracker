@@ -54,9 +54,84 @@ def cmd_report():
     start_webui()
 
 
+def cmd_display():
+    from storage import get_summary, get_active_session
+
+    summary = get_summary()
+    all_apps = sorted(
+        set(
+            list(summary["today"].keys())
+            + list(summary["week"].keys())
+            + list(summary["month"].keys())
+            + list(summary["all_time"].keys())
+        )
+    )
+
+    if not all_apps:
+        print("No tracking data yet.")
+        return
+
+    today_totals = summary["today"]
+
+    def _fmt(seconds):
+        h, r = divmod(int(seconds), 3600)
+        m, s = divmod(r, 60)
+        if h:
+            return f"{h}h {m:>2}m" if m else f"{h:>2}h      "
+        return f"    {m}m {s}s" if m else f"       {s}s"
+
+    rows = []
+    for app in all_apps:
+        today_secs = today_totals.get(app, 0)
+        if not today_secs:
+            continue
+        rows.append(
+            (
+                app,
+                today_secs,
+                today_secs,
+                summary["week"].get(app, 0),
+                summary["month"].get(app, 0),
+                summary["all_time"].get(app, 0),
+            )
+        )
+
+    rows.sort(key=lambda r: (-r[1], r[0]))
+
+    if not rows:
+        print("Nothing tracked today.")
+        return
+
+    tot_today = sum(r[2] for r in rows)
+    tot_week = sum(r[3] for r in rows)
+    tot_month = sum(r[4] for r in rows)
+    tot_all = sum(r[5] for r in rows)
+
+    pad = max(len(r[0]) for r in rows) + 1
+
+    print()
+    print("  Focus Tracker — Terminal Report")
+    print()
+    fmt_hdr = "  {:<{pad}} {:>10} {:>10} {:>10} {:>10}"
+    sep = "  " + "-" * (pad + 42)
+    print(fmt_hdr.format("App", "Today", "Week", "Month", "All", pad=pad))
+    print(sep)
+    for app, _, td, wk, mo, al in rows:
+        print(fmt_hdr.format(app, _fmt(td), _fmt(wk), _fmt(mo), _fmt(al), pad=pad))
+    print(sep)
+    print(fmt_hdr.format("Total", _fmt(tot_today), _fmt(tot_week), _fmt(tot_month), _fmt(tot_all), pad=pad))
+
+    session = get_active_session()
+    if session:
+        print(f"\n  Currently tracking: {session['app_name']}")
+    else:
+        print("\n  Not tracking.")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Focus Time Tracker")
-    parser.add_argument("command", choices=["start", "stop", "status", "report"])
+    parser.add_argument("command", choices=["start", "stop", "status", "report", "display"])
     args = parser.parse_args()
 
     commands = {
@@ -64,6 +139,7 @@ def main():
         "stop": cmd_stop,
         "status": cmd_status,
         "report": cmd_report,
+        "display": cmd_display,
     }
     commands[args.command]()
 
