@@ -61,6 +61,7 @@ def cmd_display():
     all_apps = sorted(
         set(
             list(summary["today"].keys())
+            + list(summary["fortnight"].keys())
             + list(summary["week"].keys())
             + list(summary["month"].keys())
             + list(summary["all_time"].keys())
@@ -88,6 +89,7 @@ def cmd_display():
                 app,
                 today_secs,
                 today_secs,
+                summary["fortnight"].get(app, 0),
                 summary["all_time"].get(app, 0),
             )
         )
@@ -99,21 +101,22 @@ def cmd_display():
         return
 
     tot_today = sum(r[2] for r in rows)
-    tot_all = sum(r[3] for r in rows)
+    tot_fortnight = sum(r[3] for r in rows)
+    tot_all = sum(r[4] for r in rows)
 
     pad = max(len(r[0]) for r in rows) + 1
 
     print()
     print("  Focus Tracker")
     print()
-    fmt_hdr = "  {:<{pad}} {:>9} {:>9}"
-    sep = "  " + "─" * (pad + 20)
-    print(fmt_hdr.format("App", "Today", "All", pad=pad))
+    fmt_hdr = "  {:<{pad}}  {:>9}  {:>9}  {:>9}"
+    sep = "  " + "─" * (pad + 33)
+    print(fmt_hdr.format("App", "Today", "2 Weeks", "All", pad=pad))
     print(sep)
-    for app, _, td, al in rows:
-        print(fmt_hdr.format(app, _fmt(td), _fmt(al), pad=pad))
+    for app, _, td, fn, al in rows:
+        print(fmt_hdr.format(app, _fmt(td), _fmt(fn), _fmt(al), pad=pad))
     print(sep)
-    print(fmt_hdr.format("Total", _fmt(tot_today), _fmt(tot_all), pad=pad))
+    print(fmt_hdr.format("Total", _fmt(tot_today), _fmt(tot_fortnight), _fmt(tot_all), pad=pad))
 
     session = get_active_session()
     if session:

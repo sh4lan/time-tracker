@@ -27,6 +27,13 @@ def _week_cutoff():
     return cutoff.timestamp()
 
 
+def _fortnight_cutoff():
+    """Return unix timestamp for 14 days ago at 6am."""
+    now = datetime.now()
+    cutoff = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    return (cutoff - timedelta(days=14)).timestamp()
+
+
 def _month_cutoff():
     """Return unix timestamp for the 1st of this month at 6am."""
     now = datetime.now()
@@ -102,6 +109,7 @@ def get_summary():
     conn = _connect()
     today_start = _day_cutoff()
     week_start = _week_cutoff()
+    fortnight_start = _fortnight_cutoff()
     month_start = _month_cutoff()
 
     def _agg(cutoff):
@@ -118,6 +126,7 @@ def get_summary():
 
     return {
         "today": _agg(today_start),
+        "fortnight": _agg(fortnight_start),
         "week": _agg(week_start),
         "month": _agg(month_start),
         "all_time": _agg(None),
