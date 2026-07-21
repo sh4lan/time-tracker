@@ -76,9 +76,7 @@ def cmd_display():
     def _fmt(seconds):
         h, r = divmod(int(seconds), 3600)
         m, s = divmod(r, 60)
-        if h:
-            return f"{h}h {m:>2}m" if m else f"{h:>2}h      "
-        return f"    {m}m {s}s" if m else f"       {s}s"
+        return f"{h}:{m:02d}:{s:02d}"
 
     rows = []
     for app in all_apps:
@@ -90,8 +88,6 @@ def cmd_display():
                 app,
                 today_secs,
                 today_secs,
-                summary["week"].get(app, 0),
-                summary["month"].get(app, 0),
                 summary["all_time"].get(app, 0),
             )
         )
@@ -103,23 +99,21 @@ def cmd_display():
         return
 
     tot_today = sum(r[2] for r in rows)
-    tot_week = sum(r[3] for r in rows)
-    tot_month = sum(r[4] for r in rows)
-    tot_all = sum(r[5] for r in rows)
+    tot_all = sum(r[3] for r in rows)
 
     pad = max(len(r[0]) for r in rows) + 1
 
     print()
-    print("  Focus Tracker — Terminal Report")
+    print("  Focus Tracker")
     print()
-    fmt_hdr = "  {:<{pad}} {:>10} {:>10} {:>10} {:>10}"
-    sep = "  " + "-" * (pad + 42)
-    print(fmt_hdr.format("App", "Today", "Week", "Month", "All", pad=pad))
+    fmt_hdr = "  {:<{pad}} {:>9} {:>9}"
+    sep = "  " + "─" * (pad + 20)
+    print(fmt_hdr.format("App", "Today", "All", pad=pad))
     print(sep)
-    for app, _, td, wk, mo, al in rows:
-        print(fmt_hdr.format(app, _fmt(td), _fmt(wk), _fmt(mo), _fmt(al), pad=pad))
+    for app, _, td, al in rows:
+        print(fmt_hdr.format(app, _fmt(td), _fmt(al), pad=pad))
     print(sep)
-    print(fmt_hdr.format("Total", _fmt(tot_today), _fmt(tot_week), _fmt(tot_month), _fmt(tot_all), pad=pad))
+    print(fmt_hdr.format("Total", _fmt(tot_today), _fmt(tot_all), pad=pad))
 
     session = get_active_session()
     if session:
