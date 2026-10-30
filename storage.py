@@ -5,7 +5,22 @@ from config import DB_PATH
 
 
 def _connect():
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=5)
+    # The tracker process writes this database continuously while a live view
+    # polls it. Under the default rollback journal a concurrent read can hit
+    # "database is locked", so switch to WAL, which lets readers and the writer
+    # proceed without blocking each other.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
+def get_last_poll():
+    """Return the started_at of the most recent session, or None."""
+    conn = _connect()
+    row = conn.execute("SELECT MAX(started_at) FROM sessions").fetchone()
+    conn.close()
+    return row[0] if row else None
 
 
 def _day_cutoff():
@@ -15,6 +30,15 @@ def _day_cutoff():
     if now < target:
         target -= timedelta(days=1)
     return target.timestamp()
+
+
+def _yesterday_cutoff():
+    """Return unix timestamp for yesterday 6am (start of previous focus day)."""
+    now = datetime.now()
+    today = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if now < today:
+        today -= timedelta(days=1)
+    return (today - timedelta(days=1)).timestamp()
 
 
 def _week_cutoff():
@@ -93,6 +117,17 @@ def end_session(session_id):
     conn.close()
 
 
+def get_today_start():
+    """Return unix timestamp of the first tracking session today, or None."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT MIN(started_at) FROM sessions WHERE started_at >= ?",
+        (_day_cutoff(),),
+    ).fetchone()
+    conn.close()
+    return row[0]
+
+
 def get_active_session():
     conn = _connect()
     cur = conn.execute(
@@ -108,28 +143,38 @@ def get_active_session():
 def get_summary():
     conn = _connect()
     today_start = _day_cutoff()
+    yesterday_start = _yesterday_cutoff()
     week_start = _week_cutoff()
     fortnight_start = _fortnight_cutoff()
     month_start = _month_cutoff()
 
-    def _agg(cutoff):
-        if cutoff is None:
+    def _agg(cutoff, until=None):
+        params = ()
+        cond = "duration_seconds > 0"
+        if cutoff is True:
             rows = conn.execute(
-                "SELECT app_name, COALESCE(SUM(duration_seconds),0) FROM sessions WHERE duration_seconds > 0 GROUP BY app_name"
+                f"SELECT app_name, COALESCE(SUM(duration_seconds),0) FROM sessions WHERE {cond} GROUP BY app_name"
             ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT app_name, COALESCE(SUM(duration_seconds),0) FROM sessions WHERE duration_seconds > 0 AND started_at >= ? GROUP BY app_name",
-                (cutoff,),
-            ).fetchall()
+            return {app: round(secs) for app, secs in rows}
+        if cutoff is not None:
+            params += (cutoff,)
+            cond += " AND started_at >= ?"
+        if until is not None:
+            params += (until,)
+            cond += " AND started_at < ?"
+        rows = conn.execute(
+            f"SELECT app_name, COALESCE(SUM(duration_seconds),0) FROM sessions WHERE {cond} GROUP BY app_name",
+            params,
+        ).fetchall()
         return {app: round(secs) for app, secs in rows}
 
     return {
         "today": _agg(today_start),
+        "yesterday": _agg(yesterday_start, until=today_start),
         "fortnight": _agg(fortnight_start),
         "week": _agg(week_start),
         "month": _agg(month_start),
-        "all_time": _agg(None),
+        "all_time": _agg(True),
     }
 
 

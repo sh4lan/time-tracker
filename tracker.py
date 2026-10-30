@@ -1,5 +1,7 @@
+import ctypes
 import os
 import signal
+import subprocess
 import sys
 import time
 
@@ -17,10 +19,52 @@ _running = True
 _last_app = None
 _session_id = None
 
+_PROCESS_TERMINATE = 0x0001
+_SYNCHRONIZE = 0x00100000
+_WAIT_TIMEOUT = 0x00000102
+
 
 def _signal_handler(signum, frame):
     global _running
     _running = False
+
+
+def _read_pid():
+    try:
+        return int(PID_PATH.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _is_running(pid):
+    """Check liveness via OpenProcess. os.kill(pid, 0) does not work on Windows."""
+    if pid is None:
+        return False
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _terminate(pid):
+    if pid is None:
+        return False
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_PROCESS_TERMINATE, False, pid)
+    if not handle:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return False
+    try:
+        return bool(kernel32.TerminateProcess(handle, 0))
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _write_pid():
@@ -66,24 +110,20 @@ def start_tracking():
 
 
 def is_tracking():
-    if not PID_PATH.exists():
+    pid = _read_pid()
+    if pid is None:
         return False
-    try:
-        pid = int(PID_PATH.read_text().strip())
-        os.kill(pid, 0)
+    if _is_running(pid):
         return True
-    except (OSError, ValueError):
-        PID_PATH.unlink(missing_ok=True)
-        return False
+    PID_PATH.unlink(missing_ok=True)
+    return False
 
 
 def stop_tracking():
-    if not PID_PATH.exists():
+    pid = _read_pid()
+    if pid is None:
         return
-    try:
-        pid = int(PID_PATH.read_text().strip())
-        os.kill(pid, signal.SIGTERM)
-    except (OSError, ValueError):
+    if not _terminate(pid):
         PID_PATH.unlink(missing_ok=True)
 
 
